@@ -5,15 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Tuned Mass Damper Simulator</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      // Configure MathJax
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']]
+        },
+        svg: {
+          fontCache: 'global'
+        }
+      };
+    </script>
+    <script type="text/javascript" id="MathJax-script" async
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js">
+    </script>
     <script async src="https://unpkg.com/es-module-shims@1.10.0/dist/es-module-shims.js"></script>
     <script type="importmap">
 {
   "imports": {
     "react": "https://esm.sh/react@18.3.1",
     "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
-    "recharts": "https://esm.sh/recharts@2.12.7",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/"
+    "recharts": "https://esm.sh/recharts@2.12.7"
   }
 }
 </script>
@@ -21,7 +33,7 @@
   <body class="bg-slate-100 font-sans">
     <div id="root"></div>
     <script type="module">
-      import React, { useState, useMemo } from 'react';
+      import React, { useState, useMemo, useEffect } from 'react';
       import ReactDOM from 'react-dom/client';
       import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 
@@ -98,6 +110,7 @@
       const BuildingIcon = (props) => React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", className: "h-6 w-6", fill: "none", viewBox: "0 0 24 24", stroke: "currentColor", ...props }, React.createElement("path", { strokeLinecap: "round", strokeLinejoin: "round", strokeWidth: 2, d: "M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m-1 4h1m5-8h1m-1 4h1m-1 4h1M9 21v-3.072a2 2 0 01.732-1.564L12 15l2.268 1.364A2 2 0 0115 17.928V21" }));
       const CloseIcon = (props) => React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24", strokeWidth: 1.5, stroke: "currentColor", ...props }, React.createElement("path", { strokeLinecap: "round", strokeLinejoin: "round", d: "M6 18L18 6M6 6l12 12" }));
       const LinkIcon = (props) => React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24", strokeWidth: 1.5, stroke: "currentColor", ...props }, React.createElement("path", { strokeLinecap: "round", strokeLinejoin: "round", d: "M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" }));
+      const ChevronDownIcon = (props) => React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24", strokeWidth: 1.5, stroke: "currentColor", ...props }, React.createElement("path", { strokeLinecap: "round", strokeLinejoin: "round", d: "M19.5 8.25l-7.5 7.5-7.5-7.5" }));
       // --- END: components/Icons.tsx ---
 
       // --- START: components/Header.tsx ---
@@ -199,6 +212,39 @@
         );
       };
       // --- END: components/HelpModal.tsx ---
+      
+      // --- START: components/PhysicsValidation.tsx ---
+      const PhysicsValidation = () => {
+        const [isExpanded, setIsExpanded] = useState(false);
+
+        useEffect(() => {
+          if (isExpanded && window.MathJax) {
+            window.MathJax.typeset();
+          }
+        }, [isExpanded]);
+
+        return React.createElement("div", { className: "bg-white p-4 rounded-xl shadow-lg" },
+          React.createElement("button", { 
+            className: "w-full flex justify-between items-center text-left",
+            onClick: () => setIsExpanded(!isExpanded),
+            "aria-expanded": isExpanded,
+            "aria-controls": "physics-content"
+          },
+            React.createElement("h2", { className: "text-xl font-bold text-slate-700" }, "Physics & Equations"),
+            React.createElement(ChevronDownIcon, { className: `w-6 h-6 text-slate-500 transition-transform ${isExpanded ? 'rotate-180' : ''}` })
+          ),
+          isExpanded && React.createElement("div", { id: "physics-content", className: "mt-4 pt-4 border-t text-slate-600 space-y-4 text-sm" },
+            React.createElement("p", null, "The system is modeled as two coupled damped harmonic oscillators. The equations of motion are:"),
+            React.createElement("div", { className: "overflow-x-auto py-2" },
+                React.createElement("p", null, "$$m_1 \\ddot{x}_1 + c_1 \\dot{x}_1 + k_1 x_1 + c_2(\\dot{x}_1 - \\dot{x}_2) + k_2(x_1 - x_2) = F_0 e^{i\\omega t}$$"),
+                React.createElement("p", null, "$$m_2 \\ddot{x}_2 + c_2(\\dot{x}_2 - \\dot{x}_1) + k_2(x_2 - x_1) = 0$$")
+            ),
+            React.createElement("p", null, "Where $x_1$ and $x_2$ are the displacements of the primary and secondary mass, respectively. $F_0$ is the amplitude of the external driving force with frequency $\\omega$."),
+            React.createElement("p", null, "This simulation solves for the steady-state response in the frequency domain. We assume a solution of the form $x_k(t) = X_k e^{i\\omega t}$, where $X_k$ is a complex amplitude. Substituting this into the equations of motion transforms the differential equations into a system of linear algebraic equations, which is then solved for $X_1$ and $X_2$ at each frequency step. The plotted amplitude is the magnitude $|X_k|$.")
+          )
+        );
+      };
+      // --- END: components/PhysicsValidation.tsx ---
 
       // --- START: App.tsx ---
       const App = () => {
@@ -259,6 +305,7 @@
                   )
                 )
               ),
+              React.createElement(PhysicsValidation, null),
               React.createElement("div", { className: "bg-gradient-to-br from-indigo-500 to-purple-600 text-white p-6 rounded-xl shadow-lg" },
                 React.createElement("h3", { className: "text-lg font-bold mb-2" }, "Performance"),
                 React.createElement("div", { className: "flex justify-between items-center" },
