@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tuned Mass Damper Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script async src="https://unpkg.com/es-module-shims@1.10.0/dist/es-module-shims.js"></script>
+    <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "recharts": "https://esm.sh/recharts@2.12.7",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/"
+  }
+}
+</script>
+</head>
+  <body class="bg-slate-100 font-sans">
+    <div id="root"></div>
+    <script type="module">
+      import React, { useState, useMemo } from 'react';
+      import ReactDOM from 'react-dom/client';
+      import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
+
+      // --- START: constants.ts ---
+      const DEFAULT_PARAMS = {
+        m1: 1000, k1: 1000, c1: 40,
+        m2: 50, k2: 50, c2: 5,
+        F0: 100,
+      };
+      const HELP_CONTENT = {
+          title: "About the Tuned Mass Damper Simulator",
+          purpose: "This application simulates a Tuned Mass Damper (TMD), a device mounted in structures to reduce the amplitude of mechanical vibrations. The primary system represents a structure like a skyscraper, and the secondary system is the TMD. By tuning the TMD's frequency to the resonant frequency of the structure, it effectively absorbs and dissipates vibrational energy, protecting the structure from excessive motion caused by wind or seismic activity.",
+          howToUse: "The key to an effective damper is tuning its natural frequency (ω₂) to match the natural frequency of the primary structure (ω₁).\n\n1. **Observe the Structure's Frequency:** Adjust the Primary System (Building) parameters (m₁, k₁) and note its 'Natural Frequency (ω₁)' displayed below the sliders. This is the frequency you need to counteract.\n\n2. **Tune the Damper:** Adjust the Secondary System (Damper) parameters (m₂, k₂) until the 'Damper Frequency (ω₂)' is as close as possible to the 'Target Frequency (ω₁)'. The text will turn green when you are close.\n\n3. **Use the Visual Guide:** On the charts, a dashed red line marks the structure's frequency (ω₁) and a dashed green line marks the damper's frequency (ω₂). Your goal is to make these two lines overlap.\n\n4. **Check the Results:** As you get the frequencies aligned, you will see a significant drop in the peak of the solid blue line ('Primary (With Damper)') and a large increase in the 'Peak Amplitude Reduction' percentage. This indicates a successfully tuned damper.",
+          links: [ { text: "Tuned Mass Damper on Wikipedia", url: "https://en.wikipedia.org/wiki/Tuned_mass_damper" }, { text: "The Engineering of Taipei 101", url: "https://www.youtube.com/watch?v=NYSgd1XS5d4" } ]
+      };
+      const MIT_LICENSE_TEXT = `MIT License\n\nCopyright (c) 2024\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the "Software"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.`;
+      // --- END: constants.ts ---
+
+      // --- START: hooks/useTmdSimulation.ts ---
+      const add = (a, b) => ({ re: a.re + b.re, im: a.im + b.im });
+      const sub = (a, b) => ({ re: a.re - b.re, im: a.im - b.im });
+      const mul = (a, b) => ({ re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re });
+      const div = (a, b) => {
+        const den = b.re * b.re + b.im * b.im;
+        return { re: (a.re * b.re + a.im * b.im) / den, im: (a.im * b.re - a.re * b.im) / den };
+      };
+      const magnitude = (a) => Math.sqrt(a.re * a.re + a.im * a.im);
+
+      const useTmdSimulation = (params) => {
+        return useMemo(() => {
+          const { m1, k1, c1, m2, k2, c2, F0 } = params;
+          const plotData = [];
+          const naturalFreq1 = Math.sqrt(k1 / m1);
+          const naturalFreq2 = m2 > 0 ? Math.sqrt(k2 / m2) : 0;
+          const freqMin = naturalFreq1 * 0.5;
+          const freqMax = naturalFreq1 * 1.5;
+          const steps = 400;
+
+          for (let i = 0; i <= steps; i++) {
+            const w = freqMin + (i / steps) * (freqMax - freqMin);
+            const denominatorNoDamper = Math.sqrt(Math.pow(k1 - m1 * w * w, 2) + Math.pow(c1 * w, 2));
+            const primaryWithoutDamper = Math.abs(F0 / denominatorNoDamper);
+            
+            const Z_coupling = { re: k2, im: w * c2 };
+            const Z_m1 = { re: k1 - m1 * w * w, im: w * c1 };
+            const Z_m2 = { re: -m2 * w * w, im: 0 };
+            const A11 = add(Z_m1, Z_coupling);
+            const A12 = { re: -Z_coupling.re, im: -Z_coupling.im };
+            const A21 = { re: -Z_coupling.re, im: -Z_coupling.im };
+            const A22 = add(Z_m2, Z_coupling);
+            const detA = sub(mul(A11, A22), mul(A12, A21));
+            const detA1 = mul({ re: F0, im: 0 }, A22);
+            const detA2 = mul({ re: -A21.re, im: -A21.im }, { re: F0, im: 0 });
+            const X1 = div(detA1, detA);
+            const X2 = div(detA2, detA);
+            const primaryAmplitude = magnitude(X1);
+            const secondaryAmplitude = magnitude(X2);
+
+            plotData.push({ frequency: w, primaryAmplitude, secondaryAmplitude, primaryWithoutDamper });
+          }
+          const peakNoDamper = Math.max(...plotData.map(p => p.primaryWithoutDamper));
+          const peakWithDamper = Math.max(...plotData.map(p => p.primaryAmplitude));
+          let peakReduction = 0;
+          if (peakNoDamper > 0) {
+            peakReduction = (1 - peakWithDamper / peakNoDamper) * 100;
+          }
+          return { plotData, peakReduction: Math.max(0, peakReduction), naturalFreq1, naturalFreq2 };
+        }, [params]);
+      };
+      // --- END: hooks/useTmdSimulation.ts ---
+
+      // --- START: components/Icons.tsx ---
+      const HelpIcon = (props) => React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", className: "h-6 w-6", fill: "none", viewBox: "0 0 24 24", stroke: "currentColor", ...props }, React.createElement("path", { strokeLinecap: "round", strokeLinejoin: "round", strokeWidth: 2, d: "M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" }));
+      const BuildingIcon = (props) => React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", className: "h-6 w-6", fill: "none", viewBox: "0 0 24 24", stroke: "currentColor", ...props }, React.createElement("path", { strokeLinecap: "round", strokeLinejoin: "round", strokeWidth: 2, d: "M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m-1 4h1m5-8h1m-1 4h1m-1 4h1M9 21v-3.072a2 2 0 01.732-1.564L12 15l2.268 1.364A2 2 0 0115 17.928V21" }));
+      const CloseIcon = (props) => React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24", strokeWidth: 1.5, stroke: "currentColor", ...props }, React.createElement("path", { strokeLinecap: "round", strokeLinejoin: "round", d: "M6 18L18 6M6 6l12 12" }));
+      const LinkIcon = (props) => React.createElement("svg", { xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24", strokeWidth: 1.5, stroke: "currentColor", ...props }, React.createElement("path", { strokeLinecap: "round", strokeLinejoin: "round", d: "M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" }));
+      // --- END: components/Icons.tsx ---
+
+      // --- START: components/Header.tsx ---
+      const Header = ({ onHelpClick }) => {
+        return React.createElement("header", { className: "bg-white shadow-md" },
+          React.createElement("div", { className: "container mx-auto px-4 lg:px-6 py-4 flex justify-between items-center" },
+            React.createElement("div", { className: "flex items-center space-x-3" },
+              React.createElement(BuildingIcon, { className: "w-8 h-8 text-indigo-600" }),
+              React.createElement("h1", { className: "text-2xl font-bold text-slate-800" }, "Tuned Mass Damper Simulator")
+            ),
+            React.createElement("button", { onClick: onHelpClick, className: "flex items-center space-x-2 px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500", "aria-label": "Show help" },
+              React.createElement(HelpIcon, { className: "w-5 h-5" }),
+              React.createElement("span", { className: "hidden sm:inline" }, "Help")
+            )
+          )
+        );
+      };
+      // --- END: components/Header.tsx ---
+
+      // --- START: components/ParameterSlider.tsx ---
+      const ParameterSlider = ({ label, value, onChange, min, max, step, unit, tooltip }) => {
+        const [showTooltip, setShowTooltip] = useState(false);
+        return React.createElement("div", { className: "flex flex-col space-y-2" },
+          React.createElement("div", { className: "flex justify-between items-center" },
+            React.createElement("label", { className: "font-semibold text-slate-600 text-sm flex items-center" },
+              label,
+              React.createElement("div", { className: "relative ml-2" },
+                React.createElement("button", {
+                  onMouseEnter: () => setShowTooltip(true), onMouseLeave: () => setShowTooltip(false),
+                  onFocus: () => setShowTooltip(true), onBlur: () => setShowTooltip(false),
+                  className: "w-4 h-4 rounded-full bg-slate-300 text-slate-600 flex items-center justify-center text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                }, "i"),
+                showTooltip && React.createElement("div", { className: "absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 text-center z-10" },
+                  tooltip,
+                  React.createElement("div", { className: "absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-slate-800" })
+                )
+              )
+            ),
+            React.createElement("span", { className: "text-sm font-mono bg-slate-200 px-2 py-1 rounded" }, value.toFixed(2), " ", React.createElement("span", { className: "text-slate-500" }, unit))
+          ),
+          React.createElement("input", {
+            type: "range", min, max, step, value,
+            onChange: (e) => onChange(parseFloat(e.target.value)),
+            className: "w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+          })
+        );
+      };
+      // --- END: components/ParameterSlider.tsx ---
+
+      // --- START: components/BodePlot.tsx ---
+      const BodePlot = ({ data, lines, title, referenceLines = [] }) => {
+        return React.createElement("div", { className: "bg-white p-4 rounded-xl shadow-lg h-80 lg:h-96" },
+          React.createElement("h3", { className: "text-lg font-bold text-slate-700 mb-4 ml-4" }, title),
+          React.createElement(ResponsiveContainer, { width: "100%", height: "90%" },
+            React.createElement(LineChart, { data: data, margin: { top: 20, right: 30, left: 20, bottom: 25 } },
+              React.createElement(CartesianGrid, { strokeDasharray: "3 3", stroke: "#e2e8f0" }),
+              React.createElement(XAxis, { dataKey: "frequency", type: "number", domain: ['dataMin', 'dataMax'], label: { value: 'Driving Frequency (rad/s)', position: 'insideBottom', offset: -15 }, tickFormatter: (tick) => tick.toFixed(2) }),
+              React.createElement(YAxis, { label: { value: 'Amplitude (m)', angle: -90, position: 'insideLeft', offset: -5 }, tickFormatter: (tick) => tick.toExponential(1) }),
+              React.createElement(Tooltip, { formatter: (value) => value.toExponential(3), labelFormatter: (label) => `Freq: ${label.toFixed(3)} rad/s`, contentStyle: { backgroundColor: 'rgba(255, 255, 255, 0.8)', border: '1px solid #d1d5db', borderRadius: '0.5rem' } }),
+              React.createElement(Legend, { wrapperStyle: { bottom: 0 } }),
+              lines.map(line => React.createElement(Line, { key: line.dataKey, type: "monotone", dataKey: line.dataKey, stroke: line.color, strokeWidth: line.strokeWidth || 2, strokeDasharray: line.strokeDasharray, dot: false, isAnimationActive: true, animationDuration: 300 })),
+              referenceLines.map(refLine => React.createElement(ReferenceLine, { key: refLine.label, x: refLine.x, stroke: refLine.color, strokeDasharray: "4 4", label: { value: refLine.label, position: 'insideTopRight', fill: refLine.color, fontSize: 12, fontWeight: 'bold' } }))
+            )
+          )
+        );
+      };
+      // --- END: components/BodePlot.tsx ---
+
+      // --- START: components/HelpModal.tsx ---
+      const HelpModal = ({ isVisible, onClose }) => {
+        if (!isVisible) return null;
+        return React.createElement("div", { className: "fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4", onClick: onClose },
+          React.createElement("div", { className: "bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto", onClick: (e) => e.stopPropagation() },
+            React.createElement("div", { className: "sticky top-0 bg-slate-50 p-4 border-b flex justify-between items-center z-10" },
+              React.createElement("h2", { className: "text-2xl font-bold text-slate-800" }, HELP_CONTENT.title),
+              React.createElement("button", { onClick: onClose, className: "p-1 rounded-full hover:bg-slate-200", "aria-label": "Close help" }, React.createElement(CloseIcon, { className: "w-6 h-6 text-slate-600" }))
+            ),
+            React.createElement("div", { className: "p-6 space-y-6" },
+              React.createElement("div", null,
+                React.createElement("h3", { className: "text-lg font-semibold mb-2 text-indigo-600" }, "Purpose"),
+                React.createElement("p", { className: "text-slate-600 leading-relaxed" }, HELP_CONTENT.purpose)
+              ),
+              React.createElement("div", null,
+                React.createElement("h3", { className: "text-lg font-semibold mb-2 text-indigo-600" }, "How to Use"),
+                React.createElement("p", { className: "text-slate-600 leading-relaxed", style: { whiteSpace: 'pre-wrap' } }, HELP_CONTENT.howToUse)
+              ),
+              React.createElement("div", null,
+                React.createElement("h3", { className: "text-lg font-semibold mb-2 text-indigo-600" }, "Further Reading"),
+                React.createElement("ul", { className: "space-y-2" },
+                  HELP_CONTENT.links.map(link => React.createElement("li", { key: link.url }, React.createElement("a", { href: link.url, target: "_blank", rel: "noopener noreferrer", className: "text-blue-600 hover:underline flex items-center space-x-2" }, React.createElement(LinkIcon, { className: "w-4 h-4" }), React.createElement("span", null, link.text))))
+                )
+              ),
+              React.createElement("div", null,
+                React.createElement("h3", { className: "text-lg font-semibold mb-2 text-indigo-600" }, "License"),
+                React.createElement("pre", { className: "bg-slate-100 p-4 rounded-lg text-xs text-slate-700 overflow-x-auto" }, React.createElement("code", null, MIT_LICENSE_TEXT.trim()))
+              )
+            )
+          )
+        );
+      };
+      // --- END: components/HelpModal.tsx ---
+
+      // --- START: App.tsx ---
+      const App = () => {
+        const [params, setParams] = useState(DEFAULT_PARAMS);
+        const [isHelpVisible, setIsHelpVisible] = useState(false);
+        const { plotData, peakReduction, naturalFreq1, naturalFreq2 } = useTmdSimulation(params);
+        
+        const handleParamChange = (param, value) => {
+          setParams(prevParams => ({ ...prevParams, [param]: value }));
+        };
+        
+        const primaryPlotData = useMemo(() => plotData.map(d => ({ frequency: d.frequency, "Primary (No Damper)": d.primaryWithoutDamper, "Primary (With Damper)": d.primaryAmplitude })), [plotData]);
+        const secondaryPlotData = useMemo(() => plotData.map(d => ({ frequency: d.frequency, "Secondary (Damper)": d.secondaryAmplitude })), [plotData]);
+        
+        const referenceLines = useMemo(() => [
+            { x: naturalFreq1, label: `ω₁`, color: "#ef4444" },
+            { x: naturalFreq2, label: `ω₂`, color: "#22c55e" }
+        ], [naturalFreq1, naturalFreq2]);
+
+        const getTuningColor = () => {
+            if (naturalFreq1 === 0) return 'text-slate-500';
+            const diff = Math.abs(naturalFreq2 - naturalFreq1) / naturalFreq1;
+            if (diff < 0.02) return 'text-green-500'; // within 2%
+            if (diff < 0.10) return 'text-yellow-500'; // within 10%
+            return 'text-red-500';
+        };
+
+        return React.createElement("div", { className: "min-h-screen bg-slate-100 text-slate-800" },
+          React.createElement(Header, { onHelpClick: () => setIsHelpVisible(true) }),
+          React.createElement("main", { className: "container mx-auto p-4 lg:p-6 grid grid-cols-1 lg:grid-cols-3 gap-6" },
+            React.createElement("div", { className: "lg:col-span-1 space-y-6" },
+              React.createElement("div", { className: "bg-white p-6 rounded-xl shadow-lg" },
+                React.createElement("h2", { className: "text-xl font-bold mb-4 text-slate-700 border-b pb-2" }, "Primary System (Building)"),
+                React.createElement("div", { className: "space-y-5" },
+                  React.createElement(ParameterSlider, { label: "Mass (m₁)", value: params.m1, onChange: (v) => handleParamChange('m1', v), min: 50, max: 2000, step: 10, unit: "kg", tooltip: "Represents the effective mass of the primary structure." }),
+                  React.createElement(ParameterSlider, { label: "Stiffness (k₁)", value: params.k1, onChange: (v) => handleParamChange('k1', v), min: 50, max: 2000, step: 10, unit: "N/m", tooltip: "The spring constant or stiffness of the primary structure." }),
+                  React.createElement(ParameterSlider, { label: "Damping (c₁)", value: params.c1, onChange: (v) => handleParamChange('c1', v), min: 0, max: 50, step: 0.1, unit: "Ns/m", tooltip: "Inherent energy dissipation of the primary structure." })
+                ),
+                React.createElement("div", { className: "mt-4 pt-4 border-t" },
+                  React.createElement("p", { className: "text-sm text-slate-600" }, "Natural Frequency (ω₁): ",
+                    React.createElement("span", { className: "font-bold font-mono text-indigo-600" }, naturalFreq1.toFixed(3), " rad/s")
+                  )
+                )
+              ),
+              React.createElement("div", { className: "bg-white p-6 rounded-xl shadow-lg" },
+                React.createElement("h2", { className: "text-xl font-bold mb-4 text-slate-700 border-b pb-2" }, "Secondary System (Damper)"),
+                React.createElement("div", { className: "space-y-5" },
+                  React.createElement(ParameterSlider, { label: "Mass (m₂)", value: params.m2, onChange: (v) => handleParamChange('m2', v), min: 0.1, max: 100, step: 0.1, unit: "kg", tooltip: "The mass of the tuned mass damper. Affects the damper's natural frequency (ω₂ = √(k₂/m₂))." }),
+                  React.createElement(ParameterSlider, { label: "Stiffness (k₂)", value: params.k2, onChange: (v) => handleParamChange('k2', v), min: 0.1, max: 100, step: 0.1, unit: "N/m", tooltip: "The spring constant of the damper. Affects the damper's natural frequency (ω₂ = √(k₂/m₂))." }),
+                  React.createElement(ParameterSlider, { label: "Damping (c₂)", value: params.c2, onChange: (v) => handleParamChange('c2', v), min: 0, max: 20, step: 0.1, unit: "Ns/m", tooltip: "Energy dissipation of the damper, crucial for absorbing vibrations." })
+                ),
+                React.createElement("div", { className: "mt-4 pt-4 border-t space-y-1" },
+                  React.createElement("p", { className: "text-sm text-slate-600" }, "Target Frequency (ω₁): ",
+                    React.createElement("span", { className: "font-bold font-mono text-slate-700" }, naturalFreq1.toFixed(3), " rad/s")
+                  ),
+                  React.createElement("p", { className: `text-sm font-semibold transition-colors ${getTuningColor()}` }, "Damper Frequency (ω₂): ",
+                    React.createElement("span", { className: "font-bold font-mono" }, naturalFreq2.toFixed(3), " rad/s")
+                  )
+                )
+              ),
+              React.createElement("div", { className: "bg-gradient-to-br from-indigo-500 to-purple-600 text-white p-6 rounded-xl shadow-lg" },
+                React.createElement("h3", { className: "text-lg font-bold mb-2" }, "Performance"),
+                React.createElement("div", { className: "flex justify-between items-center" },
+                  React.createElement("span", { className: "font-semibold" }, "Peak Amplitude Reduction:"),
+                  React.createElement("span", { className: "text-3xl font-bold" }, peakReduction.toFixed(1) + "%")
+                ),
+                React.createElement("p", { className: "text-sm text-indigo-200 mt-2" }, "Measures the decrease in maximum vibration amplitude of the building due to the damper.")
+              )
+            ),
+            React.createElement("div", { className: "lg:col-span-2 space-y-6" },
+              React.createElement(BodePlot, { data: primaryPlotData, lines: [{ dataKey: "Primary (No Damper)", color: "#9ca3af", strokeWidth: 2, strokeDasharray: "5 5" }, { dataKey: "Primary (With Damper)", color: "#3b82f6", strokeWidth: 2 }], title: "Primary System Amplitude Response", referenceLines: referenceLines }),
+              React.createElement(BodePlot, { data: secondaryPlotData, lines: [{ dataKey: "Secondary (Damper)", color: "#f97316", strokeWidth: 2 }], title: "Secondary System (Damper) Amplitude Response", referenceLines: referenceLines })
+            )
+          ),
+          React.createElement(HelpModal, { isVisible: isHelpVisible, onClose: () => setIsHelpVisible(false) })
+        );
+      };
+      // --- END: App.tsx ---
+
+      // --- START: index.tsx ---
+      const rootElement = document.getElementById('root');
+      if (!rootElement) {
+        throw new Error("Could not find root element to mount to");
+      }
+      const root = ReactDOM.createRoot(rootElement);
+      root.render(React.createElement(React.StrictMode, null, React.createElement(App, null)));
+      // --- END: index.tsx ---
+    </script>
+</body>
+</html>

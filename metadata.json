@@ -1,0 +1,5 @@
+{
+  "name": "Tuned Mass Damper Simulator",
+  "description": "An interactive web application to simulate and visualize the effects of a Tuned Mass Damper (TMD) on a primary vibrating system. Users can adjust physical parameters and observe the reduction in oscillation amplitude in real-time.",
+  "requestFramePermissions": []
+}
